@@ -185,9 +185,10 @@ func BulkIndex(docs []string, options Options) error {
 	if err != nil {
 		return err
 	}
+
 	defer response.Body.Close()
 
-	if response.StatusCode >= 400 {
+	if response.StatusCode >= 400 && response.StatusCode != 504 {
 		var buf bytes.Buffer
 		if _, err := io.Copy(&buf, response.Body); err != nil {
 			return err
