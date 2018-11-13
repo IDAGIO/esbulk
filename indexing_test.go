@@ -35,7 +35,7 @@ func TestDeleteIndexBackoff(t *testing.T) {
 
 	esbulk.DeleteIndex(options)
 
-	if currentRetries > expectedMaxRetries {
+	if currentRetries != expectedMaxRetries {
 		t.Errorf("Expected %d, found %d", expectedMaxRetries, currentRetries)
 	}
 }
