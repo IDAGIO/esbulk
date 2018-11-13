@@ -9,6 +9,7 @@ import (
 	"log"
 	"math/rand"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -16,19 +17,18 @@ import (
 	"github.com/sethgrid/pester"
 )
 
-var errParseCannotServerAddr = errors.New("cannot parse server address")
-
 // Options represents bulk indexing options.
 type Options struct {
-	Servers   []string
-	Index     string
-	DocType   string
-	BatchSize int
-	Verbose   bool
-	IDField   string
-	Scheme    string // http or https; deprecated, use: Servers.
-	Username  string
-	Password  string
+	Servers    []string
+	Index      string
+	DocType    string
+	BatchSize  int
+	Verbose    bool
+	IDField    string
+	Scheme     string // http or https; deprecated, use: Servers.
+	MaxRetries int
+	Username   string
+	Password   string
 }
 
 // Item represents a bulk action.
@@ -86,7 +86,7 @@ func BulkIndex(docs []string, options Options) error {
 	}
 
 	rand.Seed(time.Now().Unix())
-	server := options.Servers[rand.Intn(len(options.Servers))]
+	server := PickServerURI(options.Servers)
 	link := fmt.Sprintf("%s/_bulk", server)
 
 	var lines []string
@@ -163,8 +163,7 @@ func BulkIndex(docs []string, options Options) error {
 				doc = string(b)
 			}
 		}
-		lines = append(lines, header)
-		lines = append(lines, doc)
+		lines = append(lines, header, doc)
 	}
 
 	body := fmt.Sprintf("%s\n", strings.Join(lines, "\n"))
@@ -173,39 +172,29 @@ func BulkIndex(docs []string, options Options) error {
 	// bad requests. Finally, if we have a HTTP 200, the bulk request could
 	// still have failed: for that we need to decode the elasticsearch
 	// response.
-	req, err := http.NewRequest("POST", link, strings.NewReader(body))
+	req, err := MakeHTTPRequest(options, "POST", link, strings.NewReader(body))
 	if err != nil {
 		return err
 	}
+	client := MakeHTTPClient(options.MaxRetries)
+	resp, err := client.Do(req)
+	defer resp.Body.Close()
 
-	if options.Username != "" && options.Password != "" {
-		req.SetBasicAuth(options.Username, options.Password)
-	}
-	req.Header.Set("Content-Type", "application/json")
+	if err != nil || resp.StatusCode >= 400 {
+		if options.Verbose {
+			LogBackoffErrors(client.LogString())
+		}
 
-	client := pester.New()
-	client.Concurrency = 1
-	client.MaxRetries = 9
-	client.Backoff = pester.ExponentialBackoff
-	client.KeepLog = true
-	response, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-
-	defer response.Body.Close()
-
-	if response.StatusCode >= 400 && response.StatusCode != 504 {
 		var buf bytes.Buffer
-		if _, err := io.Copy(&buf, response.Body); err != nil {
+		if _, err := io.Copy(&buf, resp.Body); err != nil {
 			return err
 		}
 		return fmt.Errorf("indexing failed with %d %s: %s",
-			response.StatusCode, http.StatusText(response.StatusCode), buf.String())
+			resp.StatusCode, http.StatusText(resp.StatusCode), buf.String())
 	}
 
 	var br BulkResponse
-	if err := json.NewDecoder(response.Body).Decode(&br); err != nil {
+	if err := json.NewDecoder(resp.Body).Decode(&br); err != nil {
 		return err
 	}
 	if br.HasErrors {
@@ -261,27 +250,26 @@ func Worker(id string, options Options, lines chan string, wg *sync.WaitGroup) {
 
 // PutMapping applies a mapping from a reader.
 func PutMapping(options Options, body io.Reader) error {
-
-	rand.Seed(time.Now().Unix())
-	server := options.Servers[rand.Intn(len(options.Servers))]
+	server := PickServerURI(options.Servers)
 	link := fmt.Sprintf("%s/%s/_mapping/%s", server, options.Index, options.DocType)
 
 	if options.Verbose {
 		log.Printf("applying mapping: %s", link)
 	}
-	req, err := http.NewRequest("PUT", link, body)
+	req, err := MakeHTTPRequest(options, "PUT", link, body)
 	if err != nil {
 		return err
 	}
-	if options.Username != "" && options.Password != "" {
-		req.SetBasicAuth(options.Username, options.Password)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+	client := MakeHTTPClient(options.MaxRetries)
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}
 	if resp.StatusCode != 200 {
+		if options.Verbose {
+			LogBackoffErrors(client.LogString())
+		}
+
 		var buf bytes.Buffer
 		if _, err := io.Copy(&buf, resp.Body); err != nil {
 			return err
@@ -296,21 +284,15 @@ func PutMapping(options Options, body io.Reader) error {
 
 // CreateIndex creates a new index.
 func CreateIndex(options Options) error {
-	rand.Seed(time.Now().Unix())
-	server := options.Servers[rand.Intn(len(options.Servers))]
+	server := PickServerURI(options.Servers)
 	link := fmt.Sprintf("%s/%s", server, options.Index)
 
-	req, err := http.NewRequest("GET", link, nil)
+	req, err := MakeHTTPRequest(options, "GET", link, nil)
 	if err != nil {
 		return err
 	}
-
-	if options.Username != "" && options.Password != "" {
-		req.SetBasicAuth(options.Username, options.Password)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := http.DefaultClient.Do(req)
+	client := MakeHTTPClient(options.MaxRetries)
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}
@@ -321,16 +303,14 @@ func CreateIndex(options Options) error {
 		return nil
 	}
 
-	req, err = http.NewRequest("PUT", fmt.Sprintf("%s/%s/", server, options.Index), nil)
-
+	req, err = MakeHTTPRequest(options, "PUT", fmt.Sprintf("%s/%s/", server, options.Index), nil)
 	if err != nil {
 		return err
 	}
-	if options.Username != "" && options.Password != "" {
-		req.SetBasicAuth(options.Username, options.Password)
+	resp, err = client.Do(req)
+	if err != nil {
+		return err
 	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err = http.DefaultClient.Do(req)
 
 	// Elasticsearch backwards compat.
 	if resp.StatusCode == 400 {
@@ -349,11 +329,12 @@ func CreateIndex(options Options) error {
 		log.Printf("es response was: %s", buf.String())
 	}
 
-	if err != nil {
-		return err
-	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
+		if options.Verbose {
+			LogBackoffErrors(client.LogString())
+		}
+
 		var buf bytes.Buffer
 		if _, err := io.Copy(&buf, resp.Body); err != nil {
 			return err
@@ -368,24 +349,80 @@ func CreateIndex(options Options) error {
 
 // DeleteIndex removes an index.
 func DeleteIndex(options Options) error {
-	rand.Seed(time.Now().Unix())
-	server := options.Servers[rand.Intn(len(options.Servers))]
+	server := PickServerURI(options.Servers)
 	link := fmt.Sprintf("%s/%s", server, options.Index)
 
-	req, err := http.NewRequest("DELETE", link, nil)
+	req, err := MakeHTTPRequest(options, "DELETE", link, nil)
 	if err != nil {
 		return err
+	}
+	client := MakeHTTPClient(options.MaxRetries)
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	if options.Verbose {
+		LogBackoffErrors(client.LogString())
+		log.Printf("purged index: %s", resp.Status)
+	}
+	return resp.Body.Close()
+}
+
+// MakeHTTPClient returns HTTP client with exponential backoff logic
+func MakeHTTPClient(maxRetries int) *pester.Client {
+	client := pester.New()
+	client.Concurrency = 1
+	client.MaxRetries = maxRetries
+	client.Backoff = pester.ExponentialBackoff
+	client.KeepLog = true
+
+	return client
+}
+
+// MakeHTTPRequest creates ES API specific HTTP request
+func MakeHTTPRequest(options Options, verb, url string, body io.Reader) (*http.Request, error) {
+	req, err := http.NewRequest(verb, url, body)
+	if err != nil {
+		return nil, err
 	}
 	if options.Username != "" && options.Password != "" {
 		req.SetBasicAuth(options.Username, options.Password)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+
+	return req, nil
+}
+
+// PickServerURI returns random server URL from available servers
+func PickServerURI(servers []string) string {
+	rand.Seed(time.Now().Unix())
+	return servers[rand.Intn(len(servers))]
+}
+
+// LogBackoffErrors logs in case backoff logic was triggered
+func LogBackoffErrors(clientLogString string) {
+	if clientLogString != "" {
+		originalLogFlags := log.Flags()
+		log.SetFlags(originalLogFlags &^ (log.Ldate | log.Ltime))
+		lines := strings.Split(clientLogString, "\n")
+		for _, line := range lines {
+			if len(line) > 1 {
+				log.Println(normalizeLogLine(line))
+			}
+		}
+		log.SetFlags(originalLogFlags)
+	}
+}
+
+func normalizeLogLine(line string) string {
+	parsedTs, err := strconv.ParseInt(line[:10], 10, 64)
 	if err != nil {
-		return err
+		return line
 	}
-	if options.Verbose {
-		log.Printf("purged index: %s", resp.Status)
-	}
-	return resp.Body.Close()
+	ts := time.Unix(parsedTs, 0)
+
+	var buf bytes.Buffer
+	buf.WriteString(ts.Format("2006/01/02 15:04:05"))
+	buf.WriteString(line[10:])
+	return buf.String()
 }

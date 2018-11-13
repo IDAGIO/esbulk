@@ -66,6 +66,7 @@ Usage
       -w int
               number of workers to use (default 4)
       -z    unzip gz'd file on the fly
+      -retries    maximum number of backoff retries (default 3)
 
 
 ![](https://raw.githubusercontent.com/miku/esbulk/master/docs/asciicast.gif)

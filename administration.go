@@ -4,26 +4,23 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"net/http"
 )
 
 // FlushIndex flushes index.
 func FlushIndex(idx int, options Options) error {
 	server := options.Servers[idx]
 	link := fmt.Sprintf("%s/%s/_flush", server, options.Index)
-	req, err := http.NewRequest("POST", link, nil)
+	req, err := MakeHTTPRequest(options, "POST", link, nil)
 	if err != nil {
 		return err
 	}
-	if options.Username != "" && options.Password != "" {
-		req.SetBasicAuth(options.Username, options.Password)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+	client := MakeHTTPClient(options.MaxRetries)
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}
 	if options.Verbose {
+		LogBackoffErrors(client.LogString())
 		log.Printf("index flushed: %s\n", resp.Status)
 	}
 	return nil
@@ -34,19 +31,21 @@ func GetSettings(idx int, options Options) (map[string]interface{}, error) {
 	server := options.Servers[idx]
 	link := fmt.Sprintf("%s/%s/_settings", server, options.Index)
 
-	req, err := http.NewRequest("GET", link, nil)
+	req, err := MakeHTTPRequest(options, "GET", link, nil)
 	if err != nil {
 		return nil, err
 	}
-	if options.Username != "" && options.Password != "" {
-		req.SetBasicAuth(options.Username, options.Password)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
+	client := MakeHTTPClient(options.MaxRetries)
+	resp, err := client.Do(req)
 	defer resp.Body.Close()
+	if err != nil {
+		return nil, err
+	}
+
+	if options.Verbose {
+		LogBackoffErrors(client.LogString())
+	}
+
 	if resp.StatusCode != 200 {
 		return nil, fmt.Errorf("could not get settings: %s", link)
 	}
