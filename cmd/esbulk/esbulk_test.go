@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -10,46 +9,43 @@ import (
 	"github.com/idagio/esbulk"
 )
 
-// esbulk -id uuid -0 -index search-2018-11-13-10-23 -type album -w 4 -verbose -server $ELASTICSEARCH_URL out/album.search-2018-11-13-10-23.ldj
-// esbulk -id id -0 -index metadata-de-de-2018-11-13-12-29 -type artist -w 4 -verbose -server $ELASTICSEARCH_URL out/artist.metadata-de-de-2018-11-13-12-29.ldj
-// esbulk -id id -0 -index metadata-de-de-2018-11-13-12-29 -type work -w 4 -verbose -server $ELASTICSEARCH_URL out/work.metadata-de-de-2018-11-13-12-29.ldj
-// esbulk -id id -0 -index search-2018-11-13-10-23 -type piece -w 4 -verbose -server $ELASTICSEARCH_URL out/piece.search-2018-11-13-10-23.ldj
-// esbulk -id id -0 -index metadata-2018-11-13-11-23 -type recording -w 4 -verbose -server $ELASTICSEARCH_URL out/recording.metadata-2018-11-13-11-23.ldj
-// esbulk -id uuid -0 -index search-2018-11-13-10-23 -type playlist -w 4 -verbose -server $ELASTICSEARCH_URL out/playlist.search-2018-11-13-10-23.ldj
-// esbulk -id id -0 -index metadata-2018-11-13-11-23 -type artist -w 4 -verbose -server $ELASTICSEARCH_URL out/artist.metadata-2018-11-13-11-23.ldj
-// esbulk -id uuid -0 -index metadata-2018-11-13-11-23 -type album -w 4 -verbose -server $ELASTICSEARCH_URL out/album.metadata-2018-11-13-11-23.ldj
-// esbulk -id id -0 -index search-2018-11-13-10-23 -type work -w 4 -verbose -server $ELASTICSEARCH_URL out/work.search-2018-11-13-10-23.ldj
-// esbulk -id id -0 -index metadata-de-de-2018-11-13-12-29 -type recording -w 4 -verbose -server $ELASTICSEARCH_URL out/recording.metadata-de-de-2018-11-13-12-29.ldj
-// esbulk -id id -0 -index metadata-2018-11-13-11-23 -type track -w 4 -verbose -server $ELASTICSEARCH_URL out/track.metadata-2018-11-13-11-23.ldj
-// esbulk -id id -0 -index metadata-2018-11-13-11-23 -type work -w 4 -verbose -server $ELASTICSEARCH_URL out/work.metadata-2018-11-13-11-23.ldj
-// esbulk -id uuid -0 -index metadata-de-de-2018-11-13-12-29 -type album -w 4 -verbose -server $ELASTICSEARCH_URL out/album.metadata-de-de-2018-11-13-12-29.ldj
-// esbulk -id id -0 -index metadata-de-de-2018-11-13-12-29 -type track -w 4 -verbose -server $ELASTICSEARCH_URL out/track.metadata-de-de-2018-11-13-12-29.ldj
-// esbulk -id id -0 -index search-2018-11-13-10-23 -type artist -w 4 -verbose -server $ELASTICSEARCH_URL out/artist.search-2018-11-13-10-23.ldj
-// esbulk -id id -0 -index search-2018-11-13-10-23 -type recording -w 4 -verbose -server $ELASTICSEARCH_URL out/recording.search-2018-11-13-10-23.ldj
+//TODO: do profiling on single and multiple files -cpuprofile cp -memprofile mp
 
-func TestParseLDJFileWithInvalidExtension(t *testing.T) {
+// ./esbulk -id uuid -0 -index search-2018-11-14-10-23 -type album -w 4 -verbose -server http://localhost:9200 ~/esbulk_out/album.search-2018-11-14-10-23.ldj
+// ./esbulk -id uuid -0 -index metadata-2018-11-14-11-26 -type album -w 4 -verbose -server http://localhost:9200 ~/esbulk_out/album.metadata-2018-11-14-11-26.ldj
+
+// ./esbulk -id uuid -0 -w 4 -verbose -server http://localhost:9200 -dir ~/esbulk_out
+
+func TestParseLDJFileWithoutId(t *testing.T) {
 	defaults := getDefaultOptions()
 
-	sourceFilename := "id.recording.search-2018-11-13-10-23.foo"
-	sourceFilePath, _ := createLDJFile(sourceFilename)
-	defer cleanupLDJFile(sourceFilePath)
-	_, err := parseSourceFile(defaults, sourceFilename)
+	filename := "recording.search-2018-11-13-10-23.ldj"
+	path, _ := createLDJFile(filename)
+	// defer cleanupLDJFile(path)
 
-	expectedError := fmt.Sprintf("failed to load %q as it is not IDL file", sourceFilename)
+	options, err := parseLDJFile(path, defaults)
+	if err != nil {
+		t.Error(err)
+	}
 
-	if err.Error() != expectedError {
-		t.Errorf("Expect to get an error %q but got %q\n", expectedError, err.Error())
+	if options.DocType != "recording" {
+		t.Errorf("Expected DocType should have value \"recording\" but has %q", options.DocType)
+	}
+	if options.Index != "search-2018-11-13-10-23" {
+		t.Errorf("Expected Index should have value \"search-2018-11-13-10-23\" but has %q", options.Index)
 	}
 }
-
 func TestParseLDJFileWithId(t *testing.T) {
 	defaults := getDefaultOptions()
 
-	sourceFilename := "id.recording.search-2018-11-13-10-23.ldj"
-	sourceFilePath, _ := createLDJFile(sourceFilename)
-	defer cleanupLDJFile(sourceFilePath)
+	filename := "id.recording.search-2018-11-13-10-23.ldj"
+	path, _ := createLDJFile(filename)
+	// defer cleanupLDJFile(path)
 
-	options, _ := parseSourceFile(defaults, sourceFilePath)
+	options, err := parseLDJFile(path, defaults)
+	if err != nil {
+		t.Error(err)
+	}
 
 	if options.IDField != "id" {
 		t.Errorf("Expected IDField should have value \"id\" but has %q", options.IDField)

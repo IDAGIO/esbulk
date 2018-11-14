@@ -16,19 +16,22 @@ import (
 	"github.com/sethgrid/pester"
 )
 
-var errParseCannotServerAddr = errors.New("cannot parse server address")
-
 // Options represents bulk indexing options.
 type Options struct {
-	Servers   []string
-	Index     string
-	DocType   string
-	BatchSize int
-	Verbose   bool
-	IDField   string
-	Scheme    string // http or https; deprecated, use: Servers.
-	Username  string
-	Password  string
+	Servers     []string
+	Index       string
+	Purge       bool
+	Mapping     string
+	DocType     string
+	NumWorkers  int
+	ZeroReplica bool
+	GZipped     bool
+	BatchSize   int
+	Verbose     bool
+	IDField     string
+	Scheme      string // http or https; deprecated, use: Servers.
+	Username    string
+	Password    string
 }
 
 // Item represents a bulk action.
