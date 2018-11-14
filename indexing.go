@@ -182,7 +182,7 @@ func BulkIndex(docs []string, options Options) error {
 
 	if err != nil || resp.StatusCode >= 400 {
 		if options.Verbose {
-			logBackoffErrors(client.LogString())
+			logClientErrors(client.LogString())
 		}
 
 		var buf bytes.Buffer
@@ -267,7 +267,7 @@ func PutMapping(options Options, body io.Reader) error {
 	}
 	if resp.StatusCode != 200 {
 		if options.Verbose {
-			logBackoffErrors(client.LogString())
+			logClientErrors(client.LogString())
 		}
 
 		var buf bytes.Buffer
@@ -332,7 +332,7 @@ func CreateIndex(options Options) error {
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
 		if options.Verbose {
-			logBackoffErrors(client.LogString())
+			logClientErrors(client.LogString())
 		}
 
 		var buf bytes.Buffer
@@ -362,7 +362,7 @@ func DeleteIndex(options Options) error {
 		return err
 	}
 	if options.Verbose {
-		logBackoffErrors(client.LogString())
+		logClientErrors(client.LogString())
 		log.Printf("purged index: %s", resp.Status)
 	}
 	return resp.Body.Close()
@@ -399,7 +399,7 @@ func PickServerURI(servers []string) string {
 	return servers[rand.Intn(len(servers))]
 }
 
-func logBackoffErrors(clientLogString string) {
+func logClientErrors(clientLogString string) {
 	if clientLogString != "" {
 		// to make logging format consistent we need to temporary
 		// remove timestamp prefix as it was already collected by
