@@ -402,6 +402,9 @@ func PickServerURI(servers []string) string {
 // LogBackoffErrors logs in case backoff logic was triggered
 func LogBackoffErrors(clientLogString string) {
 	if clientLogString != "" {
+		// to make logging format consistent we need to temporary
+		// remove timestamp profix as it was already collected by
+		// `pester` HTTP client
 		originalLogFlags := log.Flags()
 		log.SetFlags(originalLogFlags &^ (log.Ldate | log.Ltime))
 		lines := strings.Split(clientLogString, "\n")
@@ -414,6 +417,8 @@ func LogBackoffErrors(clientLogString string) {
 	}
 }
 
+// As `pester` collects all retry log lines with Unix timestamp format
+// we need to normalize its timestamp format
 func normalizeLogLine(line string) string {
 	parsedTs, err := strconv.ParseInt(line[:10], 10, 64)
 	if err != nil {
