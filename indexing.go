@@ -427,7 +427,14 @@ func normalizeLogLine(line string) string {
 	ts := time.Unix(parsedTs, 0)
 
 	var buf bytes.Buffer
-	buf.WriteString(ts.Format("2006/01/02 15:04:05"))
-	buf.WriteString(line[10:])
+	_, err = buf.WriteString(ts.Format("2006/01/02 15:04:05"))
+	if err != nil {
+		return line
+	}
+	_, err = buf.WriteString(line[10:])
+	if err != nil {
+		return line
+	}
+
 	return buf.String()
 }
