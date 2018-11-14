@@ -182,7 +182,7 @@ func BulkIndex(docs []string, options Options) error {
 
 	if err != nil || resp.StatusCode >= 400 {
 		if options.Verbose {
-			LogBackoffErrors(client.LogString())
+			logBackoffErrors(client.LogString())
 		}
 
 		var buf bytes.Buffer
@@ -267,7 +267,7 @@ func PutMapping(options Options, body io.Reader) error {
 	}
 	if resp.StatusCode != 200 {
 		if options.Verbose {
-			LogBackoffErrors(client.LogString())
+			logBackoffErrors(client.LogString())
 		}
 
 		var buf bytes.Buffer
@@ -332,7 +332,7 @@ func CreateIndex(options Options) error {
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
 		if options.Verbose {
-			LogBackoffErrors(client.LogString())
+			logBackoffErrors(client.LogString())
 		}
 
 		var buf bytes.Buffer
@@ -362,7 +362,7 @@ func DeleteIndex(options Options) error {
 		return err
 	}
 	if options.Verbose {
-		LogBackoffErrors(client.LogString())
+		logBackoffErrors(client.LogString())
 		log.Printf("purged index: %s", resp.Status)
 	}
 	return resp.Body.Close()
@@ -399,11 +399,10 @@ func PickServerURI(servers []string) string {
 	return servers[rand.Intn(len(servers))]
 }
 
-// LogBackoffErrors logs in case backoff logic was triggered
-func LogBackoffErrors(clientLogString string) {
+func logBackoffErrors(clientLogString string) {
 	if clientLogString != "" {
 		// to make logging format consistent we need to temporary
-		// remove timestamp profix as it was already collected by
+		// remove timestamp prefix as it was already collected by
 		// `pester` HTTP client
 		originalLogFlags := log.Flags()
 		log.SetFlags(originalLogFlags &^ (log.Ldate | log.Ltime))

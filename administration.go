@@ -20,7 +20,7 @@ func FlushIndex(idx int, options Options) error {
 		return err
 	}
 	if options.Verbose {
-		LogBackoffErrors(client.LogString())
+		logBackoffErrors(client.LogString())
 		log.Printf("index flushed: %s\n", resp.Status)
 	}
 	return nil
@@ -43,7 +43,7 @@ func GetSettings(idx int, options Options) (map[string]interface{}, error) {
 	}
 
 	if options.Verbose {
-		LogBackoffErrors(client.LogString())
+		logBackoffErrors(client.LogString())
 	}
 
 	if resp.StatusCode != 200 {
