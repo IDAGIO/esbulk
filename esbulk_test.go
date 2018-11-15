@@ -1,12 +1,14 @@
-package main
+package esbulk
 
 import (
+	// "fmt"
 	"io/ioutil"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
-
-	"github.com/idagio/esbulk"
 )
 
 //TODO: do profiling on single and multiple files -cpuprofile cp -memprofile mp
@@ -16,14 +18,14 @@ import (
 
 // ./esbulk -id uuid -0 -w 4 -verbose -server http://localhost:9200 -dir ~/esbulk_out
 
-func TestParseLDJFileWithoutId(t *testing.T) {
-	defaults := getDefaultOptions()
+func TestParseLDJFilenameWithoutId(t *testing.T) {
+	defaults := getDefaultOptions([]string{"http://localhost:9200"})
 
 	filename := "recording.search-2018-11-13-10-23.ldj"
 	path, _ := createLDJFile(filename)
-	// defer cleanupLDJFile(path)
+	defer cleanupLDJFile(path)
 
-	options, err := parseLDJFile(path, defaults)
+	options, err := ParseLDJFilename(path, defaults)
 	if err != nil {
 		t.Error(err)
 	}
@@ -35,14 +37,14 @@ func TestParseLDJFileWithoutId(t *testing.T) {
 		t.Errorf("Expected Index should have value \"search-2018-11-13-10-23\" but has %q", options.Index)
 	}
 }
-func TestParseLDJFileWithId(t *testing.T) {
-	defaults := getDefaultOptions()
+func TestParseLDJFilenameWithId(t *testing.T) {
+	defaults := getDefaultOptions([]string{"http://localhost:9200"})
 
 	filename := "id.recording.search-2018-11-13-10-23.ldj"
 	path, _ := createLDJFile(filename)
-	// defer cleanupLDJFile(path)
+	defer cleanupLDJFile(path)
 
-	options, err := parseLDJFile(path, defaults)
+	options, err := ParseLDJFilename(path, defaults)
 	if err != nil {
 		t.Error(err)
 	}
@@ -58,9 +60,31 @@ func TestParseLDJFileWithId(t *testing.T) {
 	}
 }
 
-func getDefaultOptions() esbulk.Options {
-	return esbulk.Options{
-		Servers:   []string{"http://localhost:9200"},
+func TestIndexSettingsRequest(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
+		if req.Method != "PUT" {
+			t.Errorf("Expect PUT request but got %q", req.Method)
+		}
+
+		if !strings.HasSuffix(req.URL.Path, "/_settings") {
+			t.Error("Expect request URI to end with \"_settings\"")
+		}
+		rw.WriteHeader(http.StatusOK)
+		rw.Write([]byte("OK"))
+	}))
+	defer server.Close()
+
+	options := getDefaultOptions([]string{server.URL})
+
+	_, err := indexSettingsRequest(`{"index": {"refresh_interval": "1s"}}`, options)
+	if err != nil {
+		t.Error(err)
+	}
+}
+
+func getDefaultOptions(servers []string) Options {
+	return Options{
+		Servers:   servers,
 		Index:     "exampleIndex",
 		DocType:   "default",
 		BatchSize: 1,

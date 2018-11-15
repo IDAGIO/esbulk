@@ -3,7 +3,7 @@ TARGETS = esbulk
 
 # http://docs.travis-ci.com/user/languages/go/#Default-Test-Script
 test:
-	go get -d && go test -v && go test -v ./cmd/esbulk
+	go get -d && go test -v
 
 imports:
 	goimports -w .
@@ -27,7 +27,7 @@ clean:
 	rm -rf packaging/debian/esbulk/usr
 
 cover:
-	go get -d && go test -v	-coverprofile=coverage.out
+	go get -d && go test -v -coverprofile=coverage.out
 	go tool cover -html=coverage.out
 
 esbulk:
