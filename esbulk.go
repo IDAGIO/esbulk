@@ -16,6 +16,24 @@ import (
 	"time"
 )
 
+// Options represents bulk indexing options.
+type Options struct {
+	Servers     []string
+	Index       string
+	Purge       bool
+	Mapping     string
+	DocType     string
+	NumWorkers  int
+	ZeroReplica bool
+	GZipped     bool
+	BatchSize   int
+	Verbose     bool
+	IDField     string
+	Scheme      string // http or https; deprecated, use: Servers.
+	Username    string
+	Password    string
+}
+
 // ProcessLDJFile reads input file and creates an index given options using
 // multiple workers
 func ProcessLDJFile(r io.Reader, options Options) (int, error) {
@@ -81,17 +99,13 @@ func ProcessLDJFile(r io.Reader, options Options) (int, error) {
 
 		// Shutdown procedure. TODO(miku): Handle signals, too.
 		defer func() {
-			// Realtime search.
-			if _, err := indexSettingsRequest(`{"index": {"refresh_interval": "1s"}}`, options); err != nil {
-				log.Fatal(err)
-			}
-			// Reset number of replicas.
-			if _, err := indexSettingsRequest(fmt.Sprintf(`{"index": {"number_of_replicas": %q}}`, numberOfReplicas), options); err != nil {
+			// Realtime search & reset number of replicas.
+			if _, err := indexSettingsRequest(fmt.Sprintf(`{"index": {"refresh_interval": "1s", "number_of_replicas": %q}}`, numberOfReplicas), options); err != nil {
 				log.Fatal(err)
 			}
 
 			// Persist documents.
-			if err := FlushIndex(i, options); err != nil {
+			if FlushIndex(i, options) != nil {
 				log.Fatal(err)
 			}
 		}()

@@ -16,24 +16,6 @@ import (
 	"github.com/sethgrid/pester"
 )
 
-// Options represents bulk indexing options.
-type Options struct {
-	Servers     []string
-	Index       string
-	Purge       bool
-	Mapping     string
-	DocType     string
-	NumWorkers  int
-	ZeroReplica bool
-	GZipped     bool
-	BatchSize   int
-	Verbose     bool
-	IDField     string
-	Scheme      string // http or https; deprecated, use: Servers.
-	Username    string
-	Password    string
-}
-
 // Item represents a bulk action.
 type Item struct {
 	IndexAction struct {
@@ -338,7 +320,7 @@ func CreateIndex(options Options) error {
 		var buf bytes.Buffer
 		rdr := io.TeeReader(resp.Body, &buf)
 		// Might return a 400 on "No handler found for uri" ...
-		if err := json.NewDecoder(rdr).Decode(&errResponse); err == nil {
+		if json.NewDecoder(rdr).Decode(&errResponse) == nil {
 			if strings.Contains(errResponse.Error, "IndexAlreadyExistsException") {
 				return nil
 			}
