@@ -19,7 +19,7 @@ import (
 )
 
 // Version of application.
-const Version = "0.6.0"
+const Version = "0.7.0"
 
 // indexSettingsRequest runs updates an index setting, given a body and options.
 func indexSettingsRequest(body string, options esbulk.Options) (*http.Response, error) {
