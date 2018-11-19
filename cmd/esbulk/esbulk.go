@@ -33,7 +33,7 @@ func main() {
 	user := flag.String("u", "", "http basic auth username:password, like curl -u")
 	zeroReplica := flag.Bool("0", false, "set the number of replicas to 0 during indexing")
 	sourceDir := flag.String("dir", "", "path to directory with source JSON documents")
-	keepProcessed := flag.Bool("keep", true, "do not delete file from source directory after is processed(default is true)")
+	deleteProcessed := flag.Bool("nokeep", false, "delete file from source directory after is processed (default is false)")
 
 	flag.Parse()
 
@@ -127,7 +127,7 @@ func main() {
 
 			counter += count
 
-			if !*keepProcessed {
+			if *deleteProcessed {
 				if err := os.Remove(path); err != nil {
 					log.Print(err)
 					continue
@@ -158,7 +158,7 @@ func main() {
 		}
 		count += counter
 
-		if !*keepProcessed && filename != "" {
+		if *deleteProcessed && filename != "" {
 			if err := os.Remove(filename); err != nil {
 				log.Fatal(err)
 			}
