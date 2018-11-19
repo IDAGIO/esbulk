@@ -75,6 +75,9 @@ Usage
       -w int
               number of workers to use (default 4)
       -z    unzip gz'd file on the fly
+      -dir  string
+              path to directory with source JSON documents (filename has to follow specific convention see bellow)
+      -nokeep delete file after is processed (default is false)
 
 
 ![](https://raw.githubusercontent.com/miku/esbulk/master/docs/asciicast.gif)
@@ -211,6 +214,28 @@ Since 0.4.2: support for secured elasticsearch nodes:
 ```
 $ esbulk -u elastic:changeme -index myindex file.ldj
 ```
+
+Reading index files from directory
+-----------
+
+Version 0.7.0 adds support for reading multiple files from a directory:
+```
+$ esbulk -0 -w 4 -verbose -server http://localhost:9200 -dir /tmp/import
+```
+Files has to follow following filename conventions:
+```
+<doc_type>.<index_name>.ldj
+```
+or
+
+```
+<id_field>.<doc_type>.<index_name>.ldj
+```
+
+This allows to have per file specific options.
+
+Reading from directory can be combined with `-nokeep` argument to enable resume in case of one of bulk operation failed.
+
 
 ----
 
