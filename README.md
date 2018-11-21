@@ -77,7 +77,7 @@ Usage
       -z    unzip gz'd file on the fly
       -dir  string
               path to directory with source JSON documents (filename has to follow specific convention see bellow)
-      -nokeep delete file after is processed (default is false)
+      -nokeep delete file after it has been processed (default is false)
 
 
 ![](https://raw.githubusercontent.com/miku/esbulk/master/docs/asciicast.gif)
@@ -229,7 +229,7 @@ Files has to follow following filename conventions:
 or
 
 ```
-<id_field>.<doc_type>.<index_name>.ldj
+<doc_type>.<id_field>.<index_name>.ldj
 ```
 
 This allows to have per file specific options.
