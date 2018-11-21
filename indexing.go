@@ -173,7 +173,7 @@ func BulkIndex(docs []string, options Options) error {
 
 	defer response.Body.Close()
 
-	if response.StatusCode >= 400 && response.StatusCode != 504 {
+	if response.StatusCode >= 400 {
 		var buf bytes.Buffer
 		if _, err := io.Copy(&buf, response.Body); err != nil {
 			return err
@@ -320,7 +320,7 @@ func CreateIndex(options Options) error {
 		var buf bytes.Buffer
 		rdr := io.TeeReader(resp.Body, &buf)
 		// Might return a 400 on "No handler found for uri" ...
-		if json.NewDecoder(rdr).Decode(&errResponse) == nil {
+		if err := json.NewDecoder(rdr).Decode(&errResponse); err == nil {
 			if strings.Contains(errResponse.Error, "IndexAlreadyExistsException") {
 				return nil
 			}

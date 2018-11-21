@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/miku/esbulk"
-	"github.com/sethgrid/pester"
 )
 
 // Version of application.
@@ -105,10 +104,13 @@ func main() {
 			}
 
 			path := filepath.Join(*sourceDir, file.Name())
-			options, err := esbulk.ParseLDJFilename(path, defaultOptions)
+			options, err := esbulk.IndexOptionsFromFilepath(path, defaultOptions)
 			if err != nil {
-				log.Print(err)
-				continue
+				if filepath.Ext(path) == ".ldj" {
+					log.Fatal(err)
+				} else {}
+					continue
+				}
 			}
 
 			f, err := os.Open(path)
@@ -119,7 +121,7 @@ func main() {
 			}
 			reader = f
 
-			count, err := esbulk.ProcessLDJFile(reader, options)
+			count, err := esbulk.CreateIndexFromLDJFile(reader, options)
 			if err != nil {
 				log.Print(err)
 				continue
@@ -152,7 +154,7 @@ func main() {
 			reader = f
 		}
 
-		count, err := esbulk.ProcessLDJFile(reader, defaultOptions)
+		count, err := esbulk.CreateIndexFromLDJFile(reader, defaultOptions)
 		if err != nil {
 			log.Fatal(err)
 		}

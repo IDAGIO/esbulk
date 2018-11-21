@@ -1,7 +1,7 @@
 package esbulk
 
 import (
-	// "fmt"
+	"fmt"
 	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
@@ -11,56 +11,66 @@ import (
 	"testing"
 )
 
-//TODO: do profiling on single and multiple files -cpuprofile cp -memprofile mp
+const (
+	idField          = "id"
+	recordingDocType = "recording"
+	indexName        = "search-2018-11-13-10-23"
+)
 
-// ./esbulk -id uuid -0 -index search-2018-11-14-10-23 -type album -w 4 -verbose -server http://localhost:9200 ~/esbulk_out/album.search-2018-11-14-10-23.ldj
-// ./esbulk -id uuid -0 -index metadata-2018-11-14-11-26 -type album -w 4 -verbose -server http://localhost:9200 ~/esbulk_out/album.metadata-2018-11-14-11-26.ldj
+func TestIndexOptionsFromFilepathWithoutId(t *testing.T) {
+	defaultOptions := getDefaultOptions([]string{"http://localhost:9200"})
+	filename := fmt.Sprintf("%s.%s.ldj", recordingDocType, indexName)
 
-// ./esbulk -id uuid -0 -w 4 -verbose -server http://localhost:9200 -dir ~/esbulk_out
-
-func TestParseLDJFilenameWithoutId(t *testing.T) {
-	defaults := getDefaultOptions([]string{"http://localhost:9200"})
-
-	filename := "recording.search-2018-11-13-10-23.ldj"
 	path, _ := createLDJFile(filename)
 	defer cleanupLDJFile(path)
 
-	options, err := ParseLDJFilename(path, defaults)
+	updatedOptions, err := IndexOptionsFromFilepath(path, defaultOptions)
 	if err != nil {
 		t.Error(err)
 	}
 
-	if options.DocType != "recording" {
-		t.Errorf("Expected DocType should have value \"recording\" but has %q", options.DocType)
+	if updatedOptions.DocType != recordingDocType {
+		t.Errorf("Expected DocType should have value %q but has %q", recordingDocType, updatedOptions.DocType)
 	}
-	if options.Index != "search-2018-11-13-10-23" {
-		t.Errorf("Expected Index should have value \"search-2018-11-13-10-23\" but has %q", options.Index)
+	if updatedOptions.Index != "search-2018-11-13-10-23" {
+		t.Errorf("Expected Index should have value %q but has %q", indexName, updatedOptions.Index)
 	}
 }
-func TestParseLDJFilenameWithId(t *testing.T) {
-	defaults := getDefaultOptions([]string{"http://localhost:9200"})
+func TestIndexOptionsFromFilepathWithId(t *testing.T) {
+	defaultOptions := getDefaultOptions([]string{"http://localhost:9200"})
 
-	filename := "id.recording.search-2018-11-13-10-23.ldj"
+	filename := fmt.Sprintf("%s.%s.%s.ldj", recordingDocType, idField, indexName)
+
 	path, _ := createLDJFile(filename)
 	defer cleanupLDJFile(path)
 
-	options, err := ParseLDJFilename(path, defaults)
+	updatedOptions, err := IndexOptionsFromFilepath(path, defaultOptions)
 	if err != nil {
 		t.Error(err)
 	}
 
-	if options.IDField != "id" {
-		t.Errorf("Expected IDField should have value \"id\" but has %q", options.IDField)
+	if updatedOptions.IDField != idField {
+		t.Errorf("Expected IDField should have value %q but has %q", idField, updatedOptions.IDField)
 	}
-	if options.DocType != "recording" {
-		t.Errorf("Expected DocType should have value \"recording\" but has %q", options.DocType)
+	if updatedOptions.DocType != recordingDocType {
+		t.Errorf("Expected DocType should have value %q but has %q", recordingDocType, updatedOptions.DocType)
 	}
-	if options.Index != "search-2018-11-13-10-23" {
-		t.Errorf("Expected Index should have value \"search-2018-11-13-10-23\" but has %q", options.Index)
+	if updatedOptions.Index != indexName {
+		t.Errorf("Expected Index should have value %q but has %q", indexName, updatedOptions.Index)
 	}
 }
 
-func TestIndexSettingsRequest(t *testing.T) {
+func TestIndexOptionsFromFilepathNotExisting(t *testing.T) {
+	defaultOptions := getDefaultOptions([]string{"http://localhost:9200"})
+	path := "/tmp/foo/bar"
+
+	_, err := IndexOptionsFromFilepath(path, defaultOptions)
+	if err.Error() != fmt.Sprintf("failed to load %q as it does not exists", path) {
+		t.Errorf("Expected error %q but got %q", path, err)
+	}
+}
+
+func TestUpdateIndexSettings(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
 		if req.Method != "PUT" {
 			t.Errorf("Expect PUT request but got %q", req.Method)
@@ -74,11 +84,52 @@ func TestIndexSettingsRequest(t *testing.T) {
 	}))
 	defer server.Close()
 
-	options := getDefaultOptions([]string{server.URL})
+	defaultOptions := getDefaultOptions([]string{server.URL})
 
-	_, err := indexSettingsRequest(`{"index": {"refresh_interval": "1s"}}`, options)
+	_, err := updateIndexSettings(`{"index": {"refresh_interval": "1s"}}`, defaultOptions)
 	if err != nil {
 		t.Error(err)
+	}
+}
+
+func TestWaitForIndexDeletion(t *testing.T) {
+	currentRetries := 0
+	succeedOnRetry := 2
+	indexName := "exampleIndex"
+
+	server := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
+		currentRetries++
+		if req.Method != "HEAD" {
+			t.Errorf("Expect HEAD request but got %q", req.Method)
+		}
+
+		if !strings.HasSuffix(req.URL.Path, indexName) {
+			t.Errorf("Expect request URI to end with %q", indexName)
+		}
+
+		if currentRetries == succeedOnRetry {
+			rw.WriteHeader(http.StatusNotFound)
+			rw.Write([]byte("Not Found"))
+		} else {
+			rw.WriteHeader(http.StatusOK)
+			rw.Write([]byte("OK"))
+		}
+	}))
+	defer server.Close()
+
+	options := getDefaultOptions([]string{server.URL})
+
+	for i := 1; i <= maxRetriesUntilIndexIsDeleted; i++ {
+		err := waitForIndexDeletion(options, 0)
+		if err != nil {
+			t.Error(err)
+		} else {
+			break
+		}
+	}
+
+	if currentRetries != succeedOnRetry {
+		t.Errorf("Expected %d retries, found %d", succeedOnRetry, currentRetries)
 	}
 }
 
@@ -111,6 +162,6 @@ func createLDJFile(filename string) (string, error) {
 	return path, nil
 }
 
-func cleanupLDJFile(path string) {
-	os.RemoveAll(filepath.Dir(path))
+func cleanupLDJFile(path string) error {
+	return os.Remove(path)
 }

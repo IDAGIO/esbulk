@@ -34,9 +34,13 @@ type Options struct {
 	Password    string
 }
 
-// ProcessLDJFile reads input file and creates an index given options using
+const (
+	maxRetriesUntilIndexIsDeleted = 5
+)
+
+// CreateIndexFromLDJFile reads input file and creates an index given options using
 // multiple workers
-func ProcessLDJFile(r io.Reader, options Options) (int, error) {
+func CreateIndexFromLDJFile(r io.Reader, options Options) (int, error) {
 	count := 0
 
 	if options.Index == "" {
@@ -51,7 +55,11 @@ func ProcessLDJFile(r io.Reader, options Options) (int, error) {
 		if err := DeleteIndex(options); err != nil {
 			return count, err
 		}
-		time.Sleep(5 * time.Second)
+
+		// Wait until index is deleted
+		if err := waitForIndexDeletion(options, 0); err != nil {
+			log.Fatalf("unable to check if index is deleted")
+		}
 	}
 
 	// Create index if not exists.
@@ -100,7 +108,7 @@ func ProcessLDJFile(r io.Reader, options Options) (int, error) {
 		// Shutdown procedure. TODO(miku): Handle signals, too.
 		defer func() {
 			// Realtime search & reset number of replicas.
-			if _, err := indexSettingsRequest(fmt.Sprintf(`{"index": {"refresh_interval": "1s", "number_of_replicas": %q}}`, numberOfReplicas), options); err != nil {
+			if _, err := updateIndexSettings(fmt.Sprintf(`{"index": {"refresh_interval": "1s", "number_of_replicas": %q}}`, numberOfReplicas), options); err != nil {
 				log.Fatal(err)
 			}
 
@@ -110,19 +118,17 @@ func ProcessLDJFile(r io.Reader, options Options) (int, error) {
 			}
 		}()
 
-		// Realtime search.
-		resp, err := indexSettingsRequest(`{"index": {"refresh_interval": "-1"}}`, options)
+		// Realtime search and reset number of replicas (if specified).
+		var indexRequest = `{"index": {"refresh_interval": "-1"}}`
+		if options.ZeroReplica {
+			indexRequest = `{"index": {"refresh_interval": "-1", "number_of_replicas": 0}}`
+		}
+		resp, err := updateIndexSettings(indexRequest, options)
 		if err != nil {
 			return count, err
 		}
 		if resp.StatusCode >= 400 {
-			return count, fmt.Errorf("failed with response %v", resp)
-		}
-		if options.ZeroReplica {
-			// Reset number of replicas.
-			if _, err := indexSettingsRequest(`{"index": {"number_of_replicas": 0}}`, options); err != nil {
-				return count, err
-			}
+			log.Fatal(resp)
 		}
 	}
 
@@ -157,8 +163,8 @@ func ProcessLDJFile(r io.Reader, options Options) (int, error) {
 	return count, nil
 }
 
-// ParseLDJFilename parses filename to get index options for an index insertion
-func ParseLDJFilename(path string, defaults Options) (Options, error) {
+// IndexOptionsFromFilepath parses filename to get index options for an index insertion
+func IndexOptionsFromFilepath(path string, defaults Options) (Options, error) {
 	log.Printf("processing file %q...", path)
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return Options{}, fmt.Errorf("failed to load %q as it does not exists", path)
@@ -169,21 +175,20 @@ func ParseLDJFilename(path string, defaults Options) (Options, error) {
 	case 4:
 		// with id argument
 		defaults.Index = tokens[2]
-		defaults.DocType = tokens[1]
-		defaults.IDField = tokens[0]
+		defaults.DocType = tokens[0]
+		defaults.IDField = tokens[1]
 		return defaults, nil
 	case 3:
 		defaults.Index = tokens[1]
 		defaults.DocType = tokens[0]
 		return defaults, nil
 	default:
-		// no id argument
-		return Options{}, fmt.Errorf("failed to parse source LDL file %q", path)
+		return Options{}, fmt.Errorf("failed to parse source LDJ file %q", path)
 	}
 }
 
-// indexSettingsRequest runs updates an index setting, given a body and options.
-func indexSettingsRequest(body string, options Options) (*http.Response, error) {
+// updateIndexSettings updates the elasticsearch index settings
+func updateIndexSettings(body string, options Options) (*http.Response, error) {
 	// Body consist of the JSON document, e.g. `{"index": {"refresh_interval": "1s"}}`.
 	r := strings.NewReader(body)
 
@@ -210,4 +215,54 @@ func indexSettingsRequest(body string, options Options) (*http.Response, error) 
 		log.Printf("applied setting: %s with status %s\n", body, resp.Status)
 	}
 	return resp, nil
+}
+
+func waitForIndexDeletion(options Options, retry int) error {
+	if retry > maxRetriesUntilIndexIsDeleted {
+		return errors.New("unable to check if index is deleted")
+	}
+
+	exists, err := indexExists(options)
+	if err != nil {
+		return errors.New("unable to check if index is deleted")
+	}
+	if exists {
+		time.Sleep(5 * time.Second)
+		retry++
+		return waitForIndexDeletion(options, retry)
+	}
+	return nil
+}
+
+func indexExists(options Options) (bool, error) {
+	rand.Seed(time.Now().Unix())
+	server := options.Servers[rand.Intn(len(options.Servers))]
+	link := fmt.Sprintf("%s/%s", server, options.Index)
+
+	req, err := http.NewRequest("HEAD", link, nil)
+	if err != nil {
+		return false, err
+	}
+
+	// Auth handling.
+	if options.Username != "" && options.Password != "" {
+		req.SetBasicAuth(options.Username, options.Password)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == 200 {
+		return true, nil
+	}
+	if resp.StatusCode == 404 {
+		return false, nil
+	}
+
+	return false, errors.New("unable to check if index exists")
 }
