@@ -117,7 +117,7 @@ func main() {
 			if err != nil {
 				if filepath.Ext(path) == ".ldj" {
 					log.Fatal(err)
-				} else {}
+				} else {
 					continue
 				}
 			}
