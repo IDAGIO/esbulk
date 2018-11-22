@@ -1,18 +1,16 @@
 package main
 
 import (
-	"bufio"
-	"compress/gzip"
 	"flag"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
-	"net/http"
 	"os"
+	"path/filepath"
 	"runtime"
 	"runtime/pprof"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/idagio/esbulk"
@@ -20,27 +18,6 @@ import (
 
 // Version of application.
 const Version = "0.7.0"
-
-// indexSettingsRequest runs updates an index setting, given a body and options.
-func indexSettingsRequest(body string, options esbulk.Options) (*http.Response, error) {
-	// Body consist of the JSON document, e.g. `{"index": {"refresh_interval": "1s"}}`.
-	server := esbulk.PickServerURI(options.Servers)
-	link := fmt.Sprintf("%s/%s/_settings", server, options.Index)
-
-	req, err := esbulk.MakeHTTPRequest(options, "PUT", link, strings.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	client := esbulk.MakeHTTPClient(options.MaxRetries)
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	if options.Verbose {
-		log.Printf("applied setting: %s with status %s\n", body, resp.Status)
-	}
-	return resp, nil
-}
 
 func main() {
 
@@ -62,6 +39,8 @@ func main() {
 	user := flag.String("u", "", "http basic auth username:password, like curl -u")
 	zeroReplica := flag.Bool("0", false, "set the number of replicas to 0 during indexing")
 	maxRetries := flag.Int("retries", 3, "maximum number of retries (default 3) for HTTP requests")
+	sourceDir := flag.String("dir", "", "path to directory with source JSON documents")
+	deleteProcessed := flag.Bool("nokeep", false, "delete file from source directory after is processed (default is false)")
 
 	flag.Parse()
 
@@ -79,27 +58,12 @@ func main() {
 		os.Exit(0)
 	}
 
-	if *indexName == "" {
-		log.Fatal("index name required")
-	}
-
 	if len(serverFlags) == 0 {
 		serverFlags = append(serverFlags, "http://localhost:9200")
 	}
 
 	if *verbose {
 		log.Printf("using %d servers", len(serverFlags))
-	}
-
-	var file io.Reader = os.Stdin
-
-	if flag.NArg() > 0 {
-		f, err := os.Open(flag.Arg(0))
-		if err != nil {
-			log.Fatalln(err)
-		}
-		defer f.Close()
-		file = f
 	}
 
 	runtime.GOMAXPROCS(*numWorkers)
@@ -114,136 +78,104 @@ func main() {
 		password = parts[1]
 	}
 
-	options := esbulk.Options{
-		Servers:    serverFlags,
-		Index:      *indexName,
-		DocType:    *docType,
-		BatchSize:  *batchSize,
-		Verbose:    *verbose,
-		Scheme:     "http",
-		MaxRetries: *maxRetries,
-		IDField:    *idfield,
-		Username:   username,
-		Password:   password,
-	}
-
-	if *verbose {
-		log.Println(options)
-	}
-
-	if *purge {
-		if err := esbulk.DeleteIndex(options); err != nil {
-			log.Fatal(err)
-		}
-		time.Sleep(5 * time.Second)
-	}
-
-	// Create index if not exists.
-	if err := esbulk.CreateIndex(options); err != nil {
-		log.Fatal(err)
-	}
-
-	if *mapping != "" {
-		var reader io.Reader
-		if _, err := os.Stat(*mapping); os.IsNotExist(err) {
-			reader = strings.NewReader(*mapping)
-		} else {
-			file, err := os.Open(*mapping)
-			if err != nil {
-				log.Fatal(err)
-			}
-			reader = bufio.NewReader(file)
-		}
-		err := esbulk.PutMapping(options, reader)
-		if err != nil {
-			log.Fatal(err)
-		}
-	}
-
-	queue := make(chan string)
-	var wg sync.WaitGroup
-
-	for i := 0; i < *numWorkers; i++ {
-		wg.Add(1)
-		go esbulk.Worker(fmt.Sprintf("worker-%d", i), options, queue, &wg)
-	}
-
-	for i, _ := range options.Servers {
-		// Store number_of_replicas settings for restoration later.
-		doc, err := esbulk.GetSettings(i, options)
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		// TODO(miku): Rework this.
-		numberOfReplicas := doc[options.Index].(map[string]interface{})["settings"].(map[string]interface{})["index"].(map[string]interface{})["number_of_replicas"]
-		if *verbose {
-			log.Printf("on shutdown, number_of_replicas will be set back to %s", numberOfReplicas)
-		}
-
-		// Shutdown procedure. TODO(miku): Handle signals, too.
-		defer func() {
-			// Realtime search.
-			if _, err := indexSettingsRequest(`{"index": {"refresh_interval": "1s"}}`, options); err != nil {
-				log.Fatal(err)
-			}
-			// Reset number of replicas.
-			if _, err := indexSettingsRequest(fmt.Sprintf(`{"index": {"number_of_replicas": %q}}`, numberOfReplicas), options); err != nil {
-				log.Fatal(err)
-			}
-
-			// Persist documents.
-			if err := esbulk.FlushIndex(i, options); err != nil {
-				log.Fatal(err)
-			}
-		}()
-
-		// Realtime search.
-		resp, err := indexSettingsRequest(`{"index": {"refresh_interval": "-1"}}`, options)
-		if err != nil {
-			log.Fatal(err)
-		}
-		if resp.StatusCode >= 400 {
-			log.Fatal(resp)
-		}
-		if *zeroReplica {
-			// Reset number of replicas.
-			if _, err := indexSettingsRequest(`{"index": {"number_of_replicas": 0}}`, options); err != nil {
-				log.Fatal(err)
-			}
-		}
-	}
-
-	reader := bufio.NewReader(file)
-	if *gzipped {
-		zreader, err := gzip.NewReader(file)
-		if err != nil {
-			log.Fatal(err)
-		}
-		reader = bufio.NewReader(zreader)
+	defaultOptions := esbulk.Options{
+		Servers:     serverFlags,
+		Index:       *indexName,
+		Purge:       *purge,
+		Mapping:     *mapping,
+		NumWorkers:  *numWorkers,
+		ZeroReplica: *zeroReplica,
+		GZipped:     *gzipped,
+		DocType:     *docType,
+		BatchSize:   *batchSize,
+		Verbose:     *verbose,
+		Scheme:      "http",
+		IDField:     *idfield,
+		Username:    username,
+		Password:    password,
+		MaxRetries:  *maxRetries,
 	}
 
 	counter := 0
 	start := time.Now()
+	var reader io.Reader
 
-	for {
-		line, err := reader.ReadString('\n')
-		if err == io.EOF {
-			break
+	if *sourceDir != "" {
+		// process files from source directory
+		files, err := ioutil.ReadDir(*sourceDir)
+		if err != nil {
+			log.Fatalf("failed to list directory due to %s", err)
 		}
+
+		for _, file := range files {
+			if file.IsDir() {
+				continue
+			}
+
+			path := filepath.Join(*sourceDir, file.Name())
+			options, err := esbulk.IndexOptionsFromFilepath(path, defaultOptions)
+			if err != nil {
+				if filepath.Ext(path) == ".ldj" {
+					log.Fatal(err)
+				} else {}
+					continue
+				}
+			}
+
+			f, err := os.Open(path)
+			defer f.Close()
+			if err != nil {
+				log.Print(err)
+				continue
+			}
+			reader = f
+
+			count, err := esbulk.CreateIndexFromLDJFile(reader, options)
+			if err != nil {
+				log.Print(err)
+				continue
+			}
+
+			counter += count
+
+			if *deleteProcessed {
+				if err := os.Remove(path); err != nil {
+					log.Print(err)
+					continue
+				}
+			}
+
+			if options.Verbose {
+				log.Printf("finished file %q...", file.Name())
+			}
+		}
+	} else {
+		// process single file or STDIN
+		reader = os.Stdin
+		filename := ""
+		if flag.NArg() > 0 {
+			filename = flag.Arg(0)
+			f, err := os.Open(filename)
+			if err != nil {
+				log.Fatalln(err)
+			}
+			defer f.Close()
+			reader = f
+		}
+
+		count, err := esbulk.CreateIndexFromLDJFile(reader, defaultOptions)
 		if err != nil {
 			log.Fatal(err)
 		}
-		line = strings.TrimSpace(line)
-		if len(line) == 0 {
-			continue
+		count += counter
+
+		if *deleteProcessed && filename != "" {
+			if err := os.Remove(filename); err != nil {
+				log.Fatal(err)
+			}
 		}
-		queue <- line
-		counter++
 	}
 
-	close(queue)
-	wg.Wait()
 	elapsed := time.Since(start)
 
 	if *memprofile != "" {
